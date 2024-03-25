@@ -1,8 +1,8 @@
 package student;
 
 import game.*;
+
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class Explorer {
 
@@ -40,35 +40,104 @@ public class Explorer {
     public void explore(ExplorationState state) {
         //TODO : Explore the cavern and find the orb
 
-        // if the distance to the target is 0, then we are at the orb and we can return
-        if (state.getDistanceToTarget() == 0) {
-            return;
-        }
-        // create a stack to keep track of the moves made using ArrayDeque as it is faster than Stack and allow adding and removing to the front
-        // of the list and the end of the list
-        ArrayDeque<Long> madeMoves = new ArrayDeque<>();
-        ArrayDeque<Long> visited = new ArrayDeque<>();
+
+        // ---------------------------HashTable + Map Data Structures to Store Information-------------------------------------
+        HashMap<Long, ArrayList<Long>> adjacencyList = new HashMap<>(); // Create record of graph as exploring Map
+        HashMap<Long, Integer> NodeDistances  = new HashMap<>(); // Distances of every Node to Destination
+        Hashtable<Long , Integer> DistanceFromSource = new Hashtable<>();//Keeps track of shortestPath from Source to Curnode
+
+        //----------------------------HashSets to Keep Track of Information---------------------------
+        HashSet<Long> UpdateSourceTable = new HashSet<>();// needed to prevent updating Distance table twice. Only Updated when needed
+        HashSet<Long> visited = new HashSet<>(); // stores nodes that have been traversed only.
+
+        Set<Long> seen = new HashSet<>(); // Keeps record of All nodes. needed when all neighbours are visited=
+        // deadEnd and choose unvisited node. Done with set Difference seen =  seen - visited.
+        //---------------------------------------------------------------------------------------------------
+
+        //init with Data structs with start node
+        Long source = state.getCurrentLocation();
+        NodeDistances.put(source, state.getDistanceToTarget());
+        DistanceFromSource.put(source , 0);
+        seen.add(source);
+        UpdateSourceTable.add(source);
+
+        while(state.getDistanceToTarget() != 0) {
+            //Step1 : create adjacency List and store dist to destination in Node distance.
+            ArrayList<Long> nodes = new ArrayList<>();
+            for (NodeStatus neighbour : state.getNeighbours()) {
+                nodes.add(neighbour.nodeID());
+                seen.add(neighbour.nodeID());
+                NodeDistances.put(neighbour.nodeID(), neighbour.distanceToTarget());
+            }
+
+            visited.add(state.getCurrentLocation());
+
+            adjacencyList.put(state.getCurrentLocation(), nodes);
 
 
-        while (state.getDistanceToTarget() > 0) {
-            visited.push(state.getCurrentLocation()); // add the current location to the visited list
+            Long nextSmall = null;
+            Long NextGreaterThan = null;
 
-            // get the neighbors of the current location, filter out the visited ones and sort the rest by distance to the Orb
-            List<Long> neighborTiles = state.getNeighbours().stream().filter(neighbor -> !visited.contains(neighbor.nodeID()))
-                    .sorted(Comparator.comparing(NodeStatus::distanceToTarget))
-                    .map(NodeStatus::nodeID).toList();
+            Integer curDistance = state.getDistanceToTarget();
+            boolean AllNeighboursSeen = true;
+            boolean smallerthencurUnvisit = false;
+            DistanceFromSource = ClosestPath.UpdateSourceTable(source,adjacencyList,UpdateSourceTable,DistanceFromSource, visited );
 
-            // if there are neighbors that we can move to we go to the first in the list as that is the one that bring us closer to the Orb
-            // and add it to the made moves list
-            if (!neighborTiles.isEmpty()) {
-                state.moveTo(neighborTiles.getFirst());
+            ArrayList<Long> AllgreaterThanOrEqualtoCurrentNode = new ArrayList<>();
 
-                madeMoves.addFirst(state.getCurrentLocation());// add the current location to the made moves list
+            /**
+             * Three things are happening in the loop.
+             * 1. find Unvisited Node with the shortest distance to destination relative to currentNode.
+             * 2. Find the next smallest Unvisited Node.
+             * 3. Find All the other Unvisited nodes of Equal  or greater distance to destination relative to currentNode and add them to a list.
+             *
+             */
 
-            } else {
-                // if there are no neighbors, move back to the previous location
-                madeMoves.removeFirst();
-                state.moveTo(madeMoves.peekFirst());
+            for(Long find : adjacencyList.get(state.getCurrentLocation())){
+                if (!visited.contains(find) && NodeDistances.get(find) <= curDistance){
+                    AllNeighboursSeen = false;
+                    smallerthencurUnvisit = true;
+
+                    nextSmall = (nextSmall == null || NodeDistances.get(find) <= NodeDistances.get(nextSmall)) ? find : nextSmall;
+                    AllgreaterThanOrEqualtoCurrentNode.add(find);
+                }
+                else if (!visited.contains(find) && NodeDistances.get(find) >= curDistance ){
+                    AllNeighboursSeen = false;
+                    NextGreaterThan = (NextGreaterThan == null || NodeDistances.get(find) <= NodeDistances.get(NextGreaterThan)) ? find : NextGreaterThan;
+                    AllgreaterThanOrEqualtoCurrentNode.add(find);
+                }
+
+            }
+            // If we are not at a dead End choose smallest unvisited node to destination.
+            if(!AllNeighboursSeen) {
+
+                if (nextSmall != null) {
+                    state.moveTo(nextSmall);
+                } else if (NextGreaterThan != null) {
+                    ClosestPath.moveToNextGreaterThan(state, smallerthencurUnvisit, NextGreaterThan, AllgreaterThanOrEqualtoCurrentNode, DistanceFromSource, NodeDistances);
+                }
+
+            }else{
+                //we are at a dead end and have to choose from current location a seen node that is not visited with smallest distance to destination.
+
+                seen.removeAll(visited);
+
+                Set<Long> copySet = new HashSet<>(seen);
+
+                long destination = copySet.stream().reduce((first, second) -> second).orElseThrow();
+                Hashtable<Long, Integer> finalDistanceFromSource = DistanceFromSource;
+
+                destination = copySet.stream()
+                        .limit(copySet.size() - 1)
+                        .reduce(destination, (dest, element) -> ClosestPath.ScoreBoard(element, dest, finalDistanceFromSource, NodeDistances),
+                                (a, b) -> b);
+
+                Deque<ArrayList<Long>> paths = new ArrayDeque<>();
+                ArrayList<Long> thePath = ClosestPath.findShortestPath(visited,paths, adjacencyList,state.getCurrentLocation(),destination);
+
+                for(int i = 1; i < thePath.size() ; i++) {
+                    state.moveTo(thePath.get(i));
+                }
             }
         }
 
@@ -98,111 +167,45 @@ public class Explorer {
      */
     public void escape(EscapeState state) {
         //TODO: Escape from the cavern before time runs out
+        DijkstraState dijkstra = new DijkstraState(state.getVertices(), state.getCurrentNode(), state.getExit());
+        GoldListFactory goldListFactory = new GoldListFactory(dijkstra, state.getCurrentNode());
+        Node currentNode = state.getCurrentNode();
+        List<Pair<Node, Integer>> goldList = goldListFactory.getGoldList();
 
-        System.out.println(state.getVertices());
-
-        System.out.println(state.getTimeRemaining());
-
-        System.out.println("Starting position row" +  state.getCurrentNode().getTile().getRow());
-        System.out.println("Starting position column" +state.getCurrentNode().getTile().getColumn() );
-
-        state.getCurrentNode().getTile().getRow();
-        state.getCurrentNode().getTile().getColumn();
-
-        System.out.println("Ending position  row" +  state.getExit().getTile().getRow());
-        System.out.println("Ending position column" + state.getExit().getTile().getColumn() );
-
-        state.getExit().getTile().getRow();
-        state.getExit().getTile().getColumn();
-        state.getCurrentNode();
-        //HashMap< Long , ArrayList<ArrayList<Number>>> adjacencyList = new HashMap<>();
-        System.out.println("starting node" + state.getCurrentNode().getId());
-        System.out.println("finish node" + state.getExit().getId());
-        HashMap< Long , ArrayList<Long>> adjacencyList = new HashMap<>();
-        HashMap< Node , ArrayList<Node>> adjacencyList2 = new HashMap<>();
-        Set<Node> visited = new HashSet<>();
-        ArrayDeque<Node> queue = new ArrayDeque<>();
-        queue.add(state.getCurrentNode());
-
-        while (visited.size() != state.getVertices().size()){
-
-            Node currentNode = queue.removeFirst();
-
-            ArrayList<Long> neighbours = new ArrayList<>();
-            ArrayList<Node> neighbours2 = new ArrayList<>();
-
-            for(Node node : currentNode.getNeighbours()){
-                neighbours.add(node.getId());
-                neighbours2.add(node);
-                if (!visited.contains(node)){
-                    queue.add(node);
-                }
-
+        for (var pair : goldList) {
+            int distanceToTarget = dijkstra.getDistanceToNode(pair.first());
+            dijkstra.changeSource(pair.first());
+            if (state.getTimeRemaining() > distanceToTarget + dijkstra.getDistanceToExit()) {
+                dijkstra.changeSource(currentNode);
+                gotToNode(state, dijkstra, pair.first());
+                currentNode = pair.first();
+                dijkstra.changeSource(currentNode);
+            } else {
+                dijkstra.changeSource(currentNode);
             }
-            visited.add(currentNode);
-            adjacencyList.put(currentNode.getId(),neighbours);
-            adjacencyList2.put(currentNode,neighbours2);
         }
-        //System.out.println(adjacencyList);
-        ArrayDeque<Node> queue2 = new ArrayDeque<>();
-        Set<Node> seen = new HashSet<>();
-        queue2.add(state.getCurrentNode());
+        gotToExit(state, dijkstra);
+    }
 
-        ArrayList<Long> nodepaths = new ArrayList<>();
-        seen.add(state.getCurrentNode());
-        boolean notfound = true;
-
-        Deque<ArrayList<Node>> paths = new ArrayDeque<>();
-        Deque<ArrayList<Long>> pathId = new ArrayDeque<>();
-
-        paths.add(new ArrayList<Node>(List.of(state.getCurrentNode())));
-        pathId.add(new ArrayList<Long>(List.of(state.getCurrentNode().getId())));
-
-        seen.add(state.getCurrentNode());
-        ArrayList<Node> finalpath = new ArrayList<>();
-        ArrayList<Long> finalId = new ArrayList<>();
-
-        while(notfound){
-
-            Node curNode = queue2.removeFirst();
-            ArrayList<Node> curpath = paths.removeFirst();
-            ArrayList<Long> curpathId = pathId.removeFirst();
-
-            for(Node node: adjacencyList2.get(curNode)){
-                ArrayList copy = new ArrayList(curpath);
-                ArrayList copyId = new ArrayList(curpathId);
-                if(!seen.contains(node)){
-
-                    queue2.add(node);
-
-                    copy.add(curNode);
-                    copyId.add(curNode.getId());
-
-
-                    paths.add(copy);
-                    pathId.add(copyId);
-
-                    seen.add(node);
-                    if (node.getId() == state.getExit().getId()){
-                        notfound = false;
-                        finalpath = copy;
-                        finalId = copyId;
-                        break;
-                    }
-                }
+    private void gotToNode(EscapeState state, DijkstraState dijkstra, Node targetNode) {
+        Deque<Node> path = dijkstra.createPathToNode(targetNode);
+        for (Node node : path) {
+            state.moveTo(node);
+            pickGoldIfPresent(state);
+            if (state.getCurrentNode() == state.getExit()) {
+                return;
             }
-
         }
-        System.out.println(finalpath);
-        System.out.println(finalId);
-        for (int i = 2; i < finalpath.size(); i++) {
-            state.moveTo(finalpath.get(i));
+    }
+
+    private void gotToExit(EscapeState state, DijkstraState dijkstra) {
+        gotToNode(state, dijkstra, state.getExit());
+    }
+
+    private void pickGoldIfPresent(EscapeState state) {
+        if (state.getCurrentNode().getTile().getGold() > 0) {
+            state.pickUpGold();
         }
+    }
+    }
 
-        }
-
-
-
-
-
-}

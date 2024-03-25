@@ -1,7 +1,6 @@
 package game;
 
 import gui.GUI;
-import student.Explorer;
 
 import java.io.IOException;
 import java.nio.file.Files;
